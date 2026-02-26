@@ -120,7 +120,10 @@ mod tests {
         // SAFETY: test is single-threaded, no concurrent env access
         unsafe { std::env::set_var("TOKEND_TEST_VAR", "hello") };
         assert_eq!(expand_env_vars("${TOKEND_TEST_VAR}"), "hello");
-        assert_eq!(expand_env_vars("pre_${TOKEND_TEST_VAR}_post"), "pre_hello_post");
+        assert_eq!(
+            expand_env_vars("pre_${TOKEND_TEST_VAR}_post"),
+            "pre_hello_post"
+        );
         assert_eq!(expand_env_vars("${TOKEND_NONEXISTENT}"), "");
         assert_eq!(expand_env_vars("no vars here"), "no vars here");
         unsafe { std::env::remove_var("TOKEND_TEST_VAR") };
@@ -160,6 +163,9 @@ cache_dir: "/tmp/tokend-test-cache"
         assert_eq!(config.tokenizers.len(), 2);
         assert_eq!(config.tokenizers[0].source, TokenizerSource::Huggingface);
         assert_eq!(config.tokenizers[1].source, TokenizerSource::Local);
-        assert_eq!(config.tokenizers[1].path.as_deref(), Some("/models/local/tokenizer.json"));
+        assert_eq!(
+            config.tokenizers[1].path.as_deref(),
+            Some("/models/local/tokenizer.json")
+        );
     }
 }

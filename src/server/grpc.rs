@@ -41,11 +41,12 @@ impl TokenizerService for GrpcService {
         let start = Instant::now();
         let texts: Vec<&str> = req.texts.iter().map(|s| s.as_str()).collect();
 
-        match self
-            .state
-            .registry
-            .tokenize(&req.model, &texts, req.add_special_tokens, req.return_tokens)
-        {
+        match self.state.registry.tokenize(
+            &req.model,
+            &texts,
+            req.add_special_tokens,
+            req.return_tokens,
+        ) {
             Ok(results) => {
                 let latency_us = start.elapsed().as_micros() as u64;
                 let total_tokens: u64 = results.iter().map(|r| r.token_count as u64).sum();
@@ -89,7 +90,11 @@ impl TokenizerService for GrpcService {
         let source = match ProtoSource::try_from(req.source) {
             Ok(ProtoSource::Huggingface) => TokenizerSource::Huggingface,
             Ok(ProtoSource::Local) => TokenizerSource::Local,
-            _ => return Err(Status::invalid_argument("source must be HUGGINGFACE or LOCAL")),
+            _ => {
+                return Err(Status::invalid_argument(
+                    "source must be HUGGINGFACE or LOCAL",
+                ));
+            }
         };
 
         match self.state.registry.load(

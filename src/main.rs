@@ -5,7 +5,11 @@ use tokend::tokenizer;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "tokend", version, about = "Multi-model tokenizer daemon for LLM inference infrastructure")]
+#[command(
+    name = "tokend",
+    version,
+    about = "Multi-model tokenizer daemon for LLM inference infrastructure"
+)]
 struct Cli {
     /// Path to config file
     #[arg(short, long, default_value = "tokend.yaml")]
@@ -25,7 +29,11 @@ enum Commands {
         #[arg(short = 'n', long, default_value_t = 1000)]
         iterations: u32,
         /// Input text for benchmarking
-        #[arg(short, long, default_value = "The quick brown fox jumps over the lazy dog. This is a benchmark sentence for tokenizer throughput testing.")]
+        #[arg(
+            short,
+            long,
+            default_value = "The quick brown fox jumps over the lazy dog. This is a benchmark sentence for tokenizer throughput testing."
+        )]
         text: String,
     },
 }
@@ -67,7 +75,11 @@ fn bench(config_path: &str, iterations: u32, text: &str) -> anyhow::Result<()> {
         anyhow::bail!("no tokenizers loaded — check config and HF_TOKEN");
     }
 
-    println!("tokend bench — {} model(s), {} iterations each\n", models.len(), iterations);
+    println!(
+        "tokend bench — {} model(s), {} iterations each\n",
+        models.len(),
+        iterations
+    );
 
     for model in &models {
         let start = std::time::Instant::now();
@@ -92,8 +104,10 @@ fn bench(config_path: &str, iterations: u32, text: &str) -> anyhow::Result<()> {
         println!("  {model}");
         println!("    {iterations} iterations in {elapsed:.2?}");
         println!("    {us_per_call:.1} us/call, {tokens_per_sec:.0} tokens/sec");
-        println!("    {total_tokens} total tokens ({} tokens/call)\n",
-            total_tokens / iterations as u64);
+        println!(
+            "    {total_tokens} total tokens ({} tokens/call)\n",
+            total_tokens / iterations as u64
+        );
     }
 
     Ok(())

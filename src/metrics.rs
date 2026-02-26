@@ -1,6 +1,6 @@
 use prometheus::{
-    register_counter_vec, register_gauge, register_histogram_vec, CounterVec, Encoder, Gauge,
-    HistogramVec, TextEncoder,
+    CounterVec, Encoder, Gauge, HistogramVec, TextEncoder, register_counter_vec, register_gauge,
+    register_histogram_vec,
 };
 
 #[derive(Clone)]
@@ -24,16 +24,15 @@ impl Metrics {
             "Tokenization latency in microseconds",
             &["model"],
             // Buckets: 10us to 10ms covers sub-ms through slow tokenizations
-            vec![10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0]
+            vec![
+                10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0
+            ]
         )
         .expect("failed to register tokend_tokenize_latency_us");
 
-        let tokens_total = register_counter_vec!(
-            "tokend_tokens_total",
-            "Total tokens produced",
-            &["model"]
-        )
-        .expect("failed to register tokend_tokens_total");
+        let tokens_total =
+            register_counter_vec!("tokend_tokens_total", "Total tokens produced", &["model"])
+                .expect("failed to register tokend_tokens_total");
 
         let requests_total = register_counter_vec!(
             "tokend_requests_total",
@@ -63,9 +62,7 @@ impl Metrics {
         self.tokens_total
             .with_label_values(&[model])
             .inc_by(token_count as f64);
-        self.requests_total
-            .with_label_values(&[model, "ok"])
-            .inc();
+        self.requests_total.with_label_values(&[model, "ok"]).inc();
     }
 
     pub fn record_error(&self, model: &str) {

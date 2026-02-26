@@ -68,12 +68,17 @@ impl TokenizerRegistry {
             }
         };
 
-        self.tokenizers.insert(model.to_string(), Arc::new(tokenizer));
+        self.tokenizers
+            .insert(model.to_string(), Arc::new(tokenizer));
         info!(model, "tokenizer loaded");
         Ok(())
     }
 
-    fn load_from_hub(&self, model: &str, hf_token: Option<&str>) -> Result<Tokenizer, TokenizerError> {
+    fn load_from_hub(
+        &self,
+        model: &str,
+        hf_token: Option<&str>,
+    ) -> Result<Tokenizer, TokenizerError> {
         // Check local cache first
         let cache_path = self.cache_path(model);
         if cache_path.exists() {
@@ -88,19 +93,16 @@ impl TokenizerRegistry {
         }
 
         info!(model, "downloading tokenizer from HuggingFace Hub");
-        let params = hf_token.map(|token| {
-            tokenizers::FromPretrainedParameters {
-                token: Some(token.to_string()),
-                ..Default::default()
-            }
+        let params = hf_token.map(|token| tokenizers::FromPretrainedParameters {
+            token: Some(token.to_string()),
+            ..Default::default()
         });
 
-        let tokenizer = Tokenizer::from_pretrained(model, params).map_err(|e| {
-            TokenizerError::LoadFailed {
+        let tokenizer =
+            Tokenizer::from_pretrained(model, params).map_err(|e| TokenizerError::LoadFailed {
                 model: model.to_string(),
                 source: e,
-            }
-        })?;
+            })?;
 
         // Cache to disk
         if let Some(parent) = cache_path.parent()
@@ -141,9 +143,10 @@ impl TokenizerRegistry {
         add_special_tokens: bool,
         return_tokens: bool,
     ) -> Result<Vec<TokenResult>, TokenizerError> {
-        let entry = self.tokenizers.get(model).ok_or_else(|| {
-            TokenizerError::ModelNotFound(model.to_string())
-        })?;
+        let entry = self
+            .tokenizers
+            .get(model)
+            .ok_or_else(|| TokenizerError::ModelNotFound(model.to_string()))?;
         let tokenizer = entry.value().clone();
         // Drop the DashMap ref before doing work to avoid holding the shard lock
         drop(entry);
@@ -196,5 +199,4 @@ impl TokenizerRegistry {
     pub fn model_count(&self) -> usize {
         self.tokenizers.len()
     }
-
 }

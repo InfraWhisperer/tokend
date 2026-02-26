@@ -108,7 +108,9 @@ fn ensure_tokenizer() -> Option<PathBuf> {
     match tokenizers::Tokenizer::from_pretrained("bert-base-cased", None) {
         Ok(tok) => {
             if let Err(e) = tok.save(&path, false) {
-                eprintln!("[bench] failed to save tokenizer to {BENCH_TOKENIZER_PATH}: {e}; skipping benchmarks");
+                eprintln!(
+                    "[bench] failed to save tokenizer to {BENCH_TOKENIZER_PATH}: {e}; skipping benchmarks"
+                );
                 return None;
             }
             eprintln!("[bench] tokenizer saved to {BENCH_TOKENIZER_PATH}");
@@ -165,22 +167,18 @@ fn bench_single(c: &mut Criterion) {
 
     for (label, text) in cases {
         group.throughput(Throughput::Bytes(text.len() as u64));
-        group.bench_with_input(
-            BenchmarkId::new("single", label),
-            text,
-            |b, &input| {
-                b.iter(|| {
-                    registry
-                        .tokenize(
-                            black_box(MODEL_NAME),
-                            black_box(&[input]),
-                            /*add_special_tokens=*/ true,
-                            /*return_tokens=*/ false,
-                        )
-                        .expect("tokenize must not fail")
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("single", label), text, |b, &input| {
+            b.iter(|| {
+                registry
+                    .tokenize(
+                        black_box(MODEL_NAME),
+                        black_box(&[input]),
+                        /*add_special_tokens=*/ true,
+                        /*return_tokens=*/ false,
+                    )
+                    .expect("tokenize must not fail")
+            });
+        });
     }
 
     group.finish();
@@ -212,22 +210,18 @@ fn bench_batch(c: &mut Criterion) {
     for (label, texts) in cases {
         // Throughput in terms of number of sequences so criterion reports seqs/sec.
         group.throughput(Throughput::Elements(texts.len() as u64));
-        group.bench_with_input(
-            BenchmarkId::new("batch", label),
-            texts,
-            |b, &input| {
-                b.iter(|| {
-                    registry
-                        .tokenize(
-                            black_box(MODEL_NAME),
-                            black_box(input),
-                            /*add_special_tokens=*/ true,
-                            /*return_tokens=*/ false,
-                        )
-                        .expect("tokenize must not fail")
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("batch", label), texts, |b, &input| {
+            b.iter(|| {
+                registry
+                    .tokenize(
+                        black_box(MODEL_NAME),
+                        black_box(input),
+                        /*add_special_tokens=*/ true,
+                        /*return_tokens=*/ false,
+                    )
+                    .expect("tokenize must not fail")
+            });
+        });
     }
 
     group.finish();

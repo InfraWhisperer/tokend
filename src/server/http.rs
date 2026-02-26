@@ -2,11 +2,11 @@ use crate::config::TokenizerSource;
 use crate::server::AppState;
 use crate::tokenizer::TokenizerError;
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -91,10 +91,12 @@ async fn tokenize_handler(
 
     let texts: Vec<&str> = req.text.iter().map(|s| s.as_str()).collect();
 
-    match state
-        .registry
-        .tokenize(&req.model, &texts, req.add_special_tokens, req.return_tokens)
-    {
+    match state.registry.tokenize(
+        &req.model,
+        &texts,
+        req.add_special_tokens,
+        req.return_tokens,
+    ) {
         Ok(results) => {
             let latency_us = start.elapsed().as_micros() as u64;
             let total_tokens: u64 = results.iter().map(|r| r.token_count as u64).sum();
@@ -134,7 +136,11 @@ async fn tokenize_handler(
                 }
             };
 
-            (StatusCode::OK, Json(serde_json::to_value(response).unwrap())).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(response).unwrap()),
+            )
+                .into_response()
         }
         Err(TokenizerError::ModelNotFound(model)) => {
             state.metrics.record_error(&model);
@@ -167,7 +173,7 @@ async fn load_tokenizer_handler(
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "error": format!("unknown source: {other}") })),
             )
-                .into_response()
+                .into_response();
         }
     };
 
