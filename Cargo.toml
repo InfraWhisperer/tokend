@@ -1,0 +1,49 @@
+[package]
+name = "tokend"
+version = "0.1.0"
+edition = "2024"
+description = "Multi-model tokenizer microservice for LLM inference infrastructure"
+license = "MIT"
+
+[lib]
+name = "tokend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tokend"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+dashmap = "6"
+hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
+prost = "0.13"
+prometheus = { version = "0.13", features = ["process"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+home = "0.5"
+thiserror = "2"
+tokenizers = { version = "0.21", features = ["http"] }
+urlencoding = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = "0.12"
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+reqwest = { version = "0.12", features = ["json"] }
+tempfile = "3"
+
+[[bench]]
+name = "tokenize"
+harness = false

@@ -1,0 +1,33 @@
+# Build artifacts — the single largest contributor to context bloat.
+# target/ can be several GB on a mature Rust project.
+target/
+
+# Git metadata — never needed inside the image.
+.git/
+.gitignore
+
+# Local dev config. The image gets its config via /etc/tokend/tokend.yaml
+# mounted at runtime or baked into a derived image; the repo-root yaml is
+# for local development only.
+tokend.yaml
+
+# Task tracking and internal docs — not part of the build.
+tasks/
+docs/
+
+# Benchmark harness — not compiled into the production binary.
+benches/
+
+# Editor and IDE state.
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Any local env files that might contain tokens or credentials.
+.env
+.env.*
+*.key
+*.pem
+*.crt

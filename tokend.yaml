@@ -1,0 +1,15 @@
+tokenizers:
+  - model: "meta-llama/Llama-3.1-70B-Instruct"
+    source: "huggingface"
+  - model: "Qwen/Qwen3-32B"
+    source: "huggingface"
+  - model: "mistralai/Mistral-7B-Instruct-v0.3"
+    source: "huggingface"
+
+server:
+  uds_path: "/var/run/tokend.sock"
+  http_port: 8765
+  grpc_port: 8766
+
+cache_dir: "~/.cache/tokend"
+hf_token: "${HF_TOKEN}"

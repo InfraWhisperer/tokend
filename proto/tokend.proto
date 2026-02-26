@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package tokend.v1;
+
+service TokenizerService {
+  // Tokenize one or more texts using a previously loaded tokenizer.
+  // Returns NOT_FOUND if model has not been loaded.
+  // Returns INVALID_ARGUMENT if texts is empty.
+  rpc Tokenize(TokenizeRequest) returns (TokenizeResponse);
+
+  // Load and register a tokenizer by name.
+  // Returns ALREADY_EXISTS if model is already registered.
+  rpc LoadTokenizer(LoadTokenizerRequest) returns (LoadTokenizerResponse);
+
+  // Remove a registered tokenizer and release its memory.
+  // Returns NOT_FOUND if model is unknown.
+  rpc UnloadTokenizer(UnloadTokenizerRequest) returns (UnloadTokenizerResponse);
+
+  // Liveness probe.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// --- Tokenize ---
+
+message TokenizeRequest {
+  string model = 1;
+  repeated string texts = 2;
+  bool add_special_tokens = 3;
+  bool return_tokens = 4;
+}
+
+message TokenResult {
+  repeated uint32 token_ids = 1;
+  uint32 token_count = 2;
+  // Populated only when return_tokens=true. Empty slice otherwise.
+  repeated string tokens = 3;
+}
+
+message TokenizeResponse {
+  string model = 1;
+  repeated TokenResult results = 2;
+  // Wall-clock microseconds spent inside the tokenizer.
+  uint64 latency_us = 3;
+}
+
+// --- Load/Unload ---
+
+enum TokenizerSource {
+  TOKENIZER_SOURCE_UNSPECIFIED = 0;
+  TOKENIZER_SOURCE_HUGGINGFACE = 1;
+  TOKENIZER_SOURCE_LOCAL = 2;
+}
+
+message LoadTokenizerRequest {
+  string model = 1;
+  TokenizerSource source = 2;
+  optional string path = 3;
+}
+
+message LoadTokenizerResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message UnloadTokenizerRequest {
+  string model = 1;
+}
+
+message UnloadTokenizerResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// --- Health ---
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool serving = 1;
+}
