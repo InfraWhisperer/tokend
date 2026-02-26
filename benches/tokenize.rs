@@ -197,8 +197,8 @@ fn bench_batch(c: &mut Criterion) {
         }
     };
 
-    let batch_10: Vec<&str> = std::iter::repeat(TEXT_SHORT).take(10).collect();
-    let batch_100: Vec<&str> = std::iter::repeat(TEXT_SHORT).take(100).collect();
+    let batch_10: Vec<&str> = std::iter::repeat_n(TEXT_SHORT, 10).collect();
+    let batch_100: Vec<&str> = std::iter::repeat_n(TEXT_SHORT, 100).collect();
 
     let cases: &[(&str, &[&str])] = &[
         ("batch-10 short", &batch_10),
