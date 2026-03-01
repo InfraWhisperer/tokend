@@ -47,7 +47,6 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     };
 
     let http_state = state.clone();
-    let uds_state = state.clone();
     let grpc_state = state.clone();
 
     let http_port = state.config.server.http_port;
@@ -61,11 +60,17 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         }
     });
 
-    let uds_handle = tokio::spawn(async move {
-        if let Err(e) = http::serve_uds(uds_state, &uds_path).await {
-            tracing::error!(error = %e, "UDS server failed");
-        }
-    });
+    let uds_handle = if let Some(ref path) = uds_path {
+        let uds_state = state.clone();
+        let path = path.clone();
+        Some(tokio::spawn(async move {
+            if let Err(e) = http::serve_uds(uds_state, &path).await {
+                tracing::error!(error = %e, "UDS server failed");
+            }
+        }))
+    } else {
+        None
+    };
 
     let grpc_handle = tokio::spawn(async move {
         if let Err(e) = grpc::serve_grpc(grpc_state, grpc_port).await {
@@ -80,7 +85,9 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     info!("shutdown signal received, draining...");
 
     http_handle.abort();
-    uds_handle.abort();
+    if let Some(h) = uds_handle {
+        h.abort();
+    }
     grpc_handle.abort();
 
     info!("tokend stopped");

@@ -63,16 +63,23 @@ COPY Cargo.toml Cargo.lock ./
 COPY build.rs ./
 COPY proto/ ./proto/
 
-# Stub binary so `cargo build` resolves the full dep graph without our source.
-RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
+# Stub lib, binaries, and bench so `cargo build` resolves the full dep graph
+# without our source. All targets are declared in Cargo.toml.
+RUN mkdir -p src src/bin benches \
+    && echo 'fn main() {}' > src/main.rs \
+    && touch src/lib.rs \
+    && echo 'fn main() {}' > src/bin/grpc_bench.rs \
+    && echo 'fn main() {}' > benches/tokenize.rs
 
 # --release with locked Cargo.lock; cross-compilation handled by buildx
 # transparently (QEMU or native runners depending on the CI setup).
 RUN cargo build --release --locked \
-    && rm -rf src target/release/tokend target/release/.fingerprint/tokend-*
+    && rm -rf src target/release/tokend target/release/tokend-bench \
+    target/release/.fingerprint/tokend-*
 
 # Now bring in real source and compile the actual binary.
 # Touching main.rs forces Cargo to re-link even if the file hash didn't change.
+# The bench stub from the dep-cache step persists — no need to copy real benches.
 COPY src/ ./src/
 RUN touch src/main.rs \
     && cargo build --release --locked
@@ -115,7 +122,8 @@ RUN mkdir -p /var/cache/tokend \
     && chmod 700 /var/cache/tokend
 
 COPY --from=builder /build/target/release/tokend /usr/local/bin/tokend
-RUN chmod 755 /usr/local/bin/tokend
+COPY --from=builder /build/target/release/tokend-bench /usr/local/bin/tokend-bench
+RUN chmod 755 /usr/local/bin/tokend /usr/local/bin/tokend-bench
 
 USER tokend
 
@@ -128,6 +136,7 @@ EXPOSE 8766
 # Unset by default — callers inject via `docker run -e HF_TOKEN=...`
 # or Kubernetes secretKeyRef.
 ENV HF_TOKEN=""
+ENV HF_HOME="/var/cache/tokend"
 ENV RUST_LOG="tokend=info,warn"
 
-ENTRYPOINT ["tokend", "serve", "--config", "/etc/tokend/tokend.yaml"]
+ENTRYPOINT ["tokend", "--config", "/etc/tokend/tokend.yaml", "serve"]

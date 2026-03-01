@@ -88,7 +88,6 @@ async fn tokenize_handler(
     Json(req): Json<TokenizeRequest>,
 ) -> impl IntoResponse {
     let start = Instant::now();
-
     let texts: Vec<&str> = req.text.iter().map(|s| s.as_str()).collect();
 
     match state.registry.tokenize(
@@ -106,7 +105,6 @@ async fn tokenize_handler(
                 .record_tokenize(&req.model, latency_us as f64, total_tokens);
 
             let response = if results.len() == 1 {
-                // Single text → flat response
                 let r = results.into_iter().next().unwrap();
                 TokenizeResponse {
                     model: req.model,
@@ -117,7 +115,6 @@ async fn tokenize_handler(
                     latency_us,
                 }
             } else {
-                // Batch → array of results
                 let json_results: Vec<TokenResultJson> = results
                     .into_iter()
                     .map(|r| TokenResultJson {

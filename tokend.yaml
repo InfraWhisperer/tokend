@@ -7,7 +7,6 @@ tokenizers:
     source: "huggingface"
 
 server:
-  uds_path: "/var/run/tokend.sock"
   http_port: 8765
   grpc_port: 8766
 

@@ -40,16 +40,12 @@ fn dirs_next() -> Option<PathBuf> {
 
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {
-    #[serde(default = "default_uds_path")]
-    pub uds_path: String,
+    #[serde(default)]
+    pub uds_path: Option<String>,
     #[serde(default = "default_http_port")]
     pub http_port: u16,
     #[serde(default = "default_grpc_port")]
     pub grpc_port: u16,
-}
-
-fn default_uds_path() -> String {
-    "/var/run/tokend.sock".to_string()
 }
 
 fn default_http_port() -> u16 {
@@ -134,7 +130,6 @@ mod tests {
         let yaml = r#"
 tokenizers: []
 server:
-  uds_path: "/tmp/test.sock"
   http_port: 9999
   grpc_port: 9998
 "#;
@@ -142,6 +137,7 @@ server:
         assert!(config.tokenizers.is_empty());
         assert_eq!(config.server.http_port, 9999);
         assert_eq!(config.server.grpc_port, 9998);
+        assert!(config.server.uds_path.is_none());
     }
 
     #[test]
