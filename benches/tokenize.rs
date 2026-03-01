@@ -1,5 +1,6 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokend::config::TokenizerSource;
 use tokend::payloads::{TEXT_LONG, TEXT_MEDIUM, TEXT_SHORT};
 use tokend::tokenizer::TokenizerRegistry;
@@ -55,7 +56,7 @@ fn ensure_tokenizer() -> Option<PathBuf> {
 
 /// Build a registry with the bench tokenizer pre-loaded under MODEL_NAME.
 /// Returns None if no tokenizer is available.
-fn build_registry() -> Option<TokenizerRegistry> {
+fn build_registry() -> Option<Arc<TokenizerRegistry>> {
     let tokenizer_path = ensure_tokenizer()?;
 
     let registry = TokenizerRegistry::new(Path::new(BENCH_TOKENIZER_DIR));
@@ -68,7 +69,7 @@ fn build_registry() -> Option<TokenizerRegistry> {
         )
         .expect("loading local tokenizer must not fail once the file exists");
 
-    Some(registry)
+    Some(Arc::new(registry))
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +101,8 @@ fn bench_single(c: &mut Criterion) {
                     .tokenize(
                         black_box(MODEL_NAME),
                         black_box(&[input]),
-                        /*add_special_tokens=*/ true,
-                        /*return_tokens=*/ false,
+                        true,
+                        false,
                     )
                     .expect("tokenize must not fail")
             });
@@ -135,7 +136,6 @@ fn bench_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group(MODEL_NAME);
 
     for (label, texts) in cases {
-        // Throughput in terms of number of sequences so criterion reports seqs/sec.
         group.throughput(Throughput::Elements(texts.len() as u64));
         group.bench_with_input(BenchmarkId::new("batch", label), texts, |b, &input| {
             b.iter(|| {
@@ -143,8 +143,8 @@ fn bench_batch(c: &mut Criterion) {
                     .tokenize(
                         black_box(MODEL_NAME),
                         black_box(input),
-                        /*add_special_tokens=*/ true,
-                        /*return_tokens=*/ false,
+                        true,
+                        false,
                     )
                     .expect("tokenize must not fail")
             });
@@ -154,5 +154,67 @@ fn bench_batch(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_single, bench_batch);
+// ---------------------------------------------------------------------------
+// Concurrent benchmarks — measures DashMap contention and Arc<Tokenizer>
+// cloning under parallel access (the production hot path).
+// ---------------------------------------------------------------------------
+
+fn bench_concurrent(c: &mut Criterion) {
+    let registry = match build_registry() {
+        Some(r) => r,
+        None => {
+            eprintln!("[bench] skipping concurrent benchmarks: no tokenizer available");
+            return;
+        }
+    };
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(8)
+        .build()
+        .unwrap();
+
+    let cases: &[(&str, &str)] = &[
+        ("short (~20 tokens)", TEXT_SHORT),
+        ("medium (~200 tokens)", TEXT_MEDIUM),
+        ("long (~2000 tokens)", TEXT_LONG),
+    ];
+
+    for concurrency in [4, 16, 64] {
+        let mut group = c.benchmark_group(format!("concurrent-{concurrency}"));
+
+        for (label, text) in cases {
+            group.throughput(Throughput::Elements(concurrency));
+            group.bench_with_input(
+                BenchmarkId::new("tokenize", label),
+                text,
+                |b, &input| {
+                    b.iter(|| {
+                        rt.block_on(async {
+                            let mut handles = Vec::with_capacity(concurrency as usize);
+                            for _ in 0..concurrency {
+                                let reg = registry.clone();
+                                handles.push(tokio::spawn(async move {
+                                    reg.tokenize(
+                                        black_box(MODEL_NAME),
+                                        black_box(&[input]),
+                                        true,
+                                        false,
+                                    )
+                                    .expect("tokenize must not fail");
+                                }));
+                            }
+                            for h in handles {
+                                h.await.unwrap();
+                            }
+                        });
+                    });
+                },
+            );
+        }
+
+        group.finish();
+    }
+}
+
+criterion_group!(benches, bench_single, bench_batch, bench_concurrent);
 criterion_main!(benches);

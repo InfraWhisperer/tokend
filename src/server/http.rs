@@ -1,3 +1,4 @@
+use crate::chat_template::{ChatMessage, Tool};
 use crate::config::TokenizerSource;
 use crate::server::AppState;
 use crate::tokenizer::TokenizerError;
@@ -81,6 +82,31 @@ fn default_hf_source() -> String {
     "huggingface".to_string()
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ChatTokenizeRequest {
+    pub model: String,
+    pub messages: Vec<ChatMessage>,
+    #[serde(default = "default_true")]
+    pub add_generation_prompt: bool,
+    #[serde(default)]
+    pub tools: Option<Vec<Tool>>,
+    #[serde(default = "default_true")]
+    pub add_special_tokens: bool,
+    #[serde(default)]
+    pub return_tokens: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChatTokenizeResponse {
+    pub model: String,
+    pub token_count: u32,
+    pub token_ids: Vec<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<Vec<String>>,
+    pub latency_us: u64,
+    pub render_us: u64,
+}
+
 // --- Handlers ---
 
 async fn tokenize_handler(
@@ -147,6 +173,70 @@ async fn tokenize_handler(
             )
                 .into_response()
         }
+        Err(e) => {
+            state.metrics.record_error(&req.model);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn chat_tokenize_handler(
+    State(state): State<AppState>,
+    Json(req): Json<ChatTokenizeRequest>,
+) -> impl IntoResponse {
+    let start = Instant::now();
+
+    match state.registry.chat_tokenize(
+        &req.model,
+        &req.messages,
+        req.add_generation_prompt,
+        req.tools.as_deref(),
+        req.add_special_tokens,
+        req.return_tokens,
+    ) {
+        Ok(result) => {
+            let latency_us = start.elapsed().as_micros() as u64;
+
+            state.metrics.record_chat_tokenize(
+                &req.model,
+                latency_us as f64,
+                result.render_us as f64,
+                result.token_count as u64,
+            );
+
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(ChatTokenizeResponse {
+                    model: req.model,
+                    token_count: result.token_count,
+                    token_ids: result.token_ids,
+                    tokens: result.tokens,
+                    latency_us,
+                    render_us: result.render_us,
+                })
+                .unwrap()),
+            )
+                .into_response()
+        }
+        Err(TokenizerError::ModelNotFound(model)) => {
+            state.metrics.record_error(&model);
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("model not loaded: {model}") })),
+            )
+                .into_response()
+        }
+        Err(TokenizerError::ChatTemplateNotAvailable(model)) => (
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({ "error": format!("chat template not available for {model}") }),
+            ),
+        )
+            .into_response(),
         Err(e) => {
             state.metrics.record_error(&req.model);
             (
@@ -286,6 +376,7 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/tokenize", post(tokenize_handler))
+        .route("/v1/chat/tokenize", post(chat_tokenize_handler))
         .route("/tokenizers/load", post(load_tokenizer_handler))
         .route("/tokenizers/{model}", delete(unload_tokenizer_handler))
         .route("/health", get(health_handler))

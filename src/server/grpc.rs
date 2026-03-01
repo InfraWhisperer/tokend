@@ -1,3 +1,4 @@
+use crate::chat_template;
 use crate::config::TokenizerSource;
 use crate::server::AppState;
 use crate::tokenizer::TokenizerError;
@@ -11,9 +12,9 @@ pub mod proto {
 
 use proto::tokenizer_service_server::{TokenizerService, TokenizerServiceServer};
 use proto::{
-    HealthRequest, HealthResponse, LoadTokenizerRequest, LoadTokenizerResponse, TokenResult,
-    TokenizeRequest, TokenizeResponse, TokenizerSource as ProtoSource, UnloadTokenizerRequest,
-    UnloadTokenizerResponse,
+    ChatTokenizeRequest, ChatTokenizeResponse, HealthRequest, HealthResponse,
+    LoadTokenizerRequest, LoadTokenizerResponse, TokenResult, TokenizeRequest, TokenizeResponse,
+    TokenizerSource as ProtoSource, UnloadTokenizerRequest, UnloadTokenizerResponse,
 };
 
 pub struct GrpcService {
@@ -74,6 +75,91 @@ impl TokenizerService for GrpcService {
                 self.state.metrics.record_error(&model);
                 Err(Status::not_found(format!("model not loaded: {model}")))
             }
+            Err(e) => {
+                self.state.metrics.record_error(&req.model);
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    async fn chat_tokenize(
+        &self,
+        request: Request<ChatTokenizeRequest>,
+    ) -> Result<Response<ChatTokenizeResponse>, Status> {
+        let req = request.into_inner();
+
+        if req.messages.is_empty() {
+            return Err(Status::invalid_argument("messages must not be empty"));
+        }
+
+        // Convert proto messages to domain types
+        let messages: Vec<chat_template::ChatMessage> = req
+            .messages
+            .into_iter()
+            .map(|m| chat_template::ChatMessage {
+                role: m.role,
+                content: m.content,
+                tool_calls: if m.tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(
+                        m.tool_calls
+                            .into_iter()
+                            .map(|tc| {
+                                let func = tc.function.unwrap_or_default();
+                                chat_template::ToolCall {
+                                    id: tc.id,
+                                    call_type: tc.r#type,
+                                    function: chat_template::FunctionCall {
+                                        name: func.name,
+                                        arguments: func.arguments,
+                                    },
+                                }
+                            })
+                            .collect(),
+                    )
+                },
+                tool_call_id: m.tool_call_id,
+                name: m.name,
+            })
+            .collect();
+
+        let start = Instant::now();
+
+        match self.state.registry.chat_tokenize(
+            &req.model,
+            &messages,
+            req.add_generation_prompt,
+            None,
+            true,
+            req.return_tokens,
+        ) {
+            Ok(result) => {
+                let latency_us = start.elapsed().as_micros() as u64;
+
+                self.state.metrics.record_chat_tokenize(
+                    &req.model,
+                    latency_us as f64,
+                    result.render_us as f64,
+                    result.token_count as u64,
+                );
+
+                Ok(Response::new(ChatTokenizeResponse {
+                    model: req.model,
+                    token_count: result.token_count,
+                    token_ids: result.token_ids,
+                    tokens: result.tokens.unwrap_or_default(),
+                    latency_us,
+                    render_us: result.render_us,
+                }))
+            }
+            Err(TokenizerError::ModelNotFound(model)) => {
+                self.state.metrics.record_error(&model);
+                Err(Status::not_found(format!("model not loaded: {model}")))
+            }
+            Err(TokenizerError::ChatTemplateNotAvailable(model)) => Err(
+                Status::failed_precondition(format!("chat template not available for {model}")),
+            ),
             Err(e) => {
                 self.state.metrics.record_error(&req.model);
                 Err(Status::internal(e.to_string()))

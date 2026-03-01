@@ -77,6 +77,121 @@ fire when p99 decode latency exceeds the agreed envelope, triggering \
 autoscaler events that provision additional decode capacity within the \
 cluster before the budget is exhausted.";
 
+// ---------------------------------------------------------------------------
+// Chat conversation payloads for benchmarking chat template + tokenize
+// ---------------------------------------------------------------------------
+
+use crate::chat_template::ChatMessage;
+
+fn msg(role: &str, content: &str) -> ChatMessage {
+    ChatMessage {
+        role: role.to_string(),
+        content: Some(content.to_string()),
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+    }
+}
+
+/// 2-turn conversation: system + user. ~50 tokens after template application.
+pub fn chat_short() -> Vec<ChatMessage> {
+    vec![
+        msg("system", "You are a helpful assistant."),
+        msg("user", TEXT_SHORT),
+    ]
+}
+
+/// 5-turn conversation. ~500 tokens after template application.
+pub fn chat_medium() -> Vec<ChatMessage> {
+    vec![
+        msg("system", "You are a helpful assistant specializing in distributed systems."),
+        msg("user", "Explain how Kubernetes scheduling works."),
+        msg("assistant", TEXT_MEDIUM),
+        msg("user", "How does the HPA interact with custom metrics?"),
+        msg(
+            "assistant",
+            "HPA queries the metrics API server on each reconciliation loop, comparing \
+             the current metric value against the target. When the ratio exceeds 1.0, \
+             it scales up by ceil(currentReplicas * ratio). The metrics pipeline \
+             typically flows from the application through Prometheus, then the \
+             prometheus-adapter exposes them as custom.metrics.k8s.io resources.",
+        ),
+    ]
+}
+
+/// 20-turn conversation. ~3000 tokens after template application.
+pub fn chat_long() -> Vec<ChatMessage> {
+    vec![
+        msg("system", "You are an expert in LLM inference infrastructure."),
+        msg("user", "What is disaggregated LLM serving?"),
+        msg("assistant", &TEXT_LONG[..600]),
+        msg("user", "How does prefix-cache-aware routing work?"),
+        msg("assistant", &TEXT_LONG[600..1200]),
+        msg("user", "What about KV-cache coordination in split-brain scenarios?"),
+        msg("assistant", &TEXT_LONG[1200..1800]),
+        msg("user", "How does attention kernel selection depend on sequence length?"),
+        msg("assistant", &TEXT_LONG[1800..]),
+        msg("user", "Can you elaborate on the observability requirements?"),
+        msg("assistant", TEXT_MEDIUM),
+        msg("user", "How does the scheduler assign pods to nodes?"),
+        msg(
+            "assistant",
+            "The scheduler runs a two-phase pipeline: filtering and scoring. \
+             Filtering removes nodes that don't meet hard constraints (resource \
+             requests, taints, affinity rules). Scoring ranks remaining candidates \
+             using weighted plugins — ImageLocality, NodeAffinity, PodTopologySpread, \
+             and others. The highest-scoring node wins.",
+        ),
+        msg("user", "What about topology-aware scheduling?"),
+        msg(
+            "assistant",
+            "TopologySpreadConstraints let you distribute pods across failure domains \
+             (zones, racks, nodes) with configurable maxSkew. The scheduler enforces \
+             these during both filtering and scoring phases, preventing hot spots \
+             while respecting the skew budget you define.",
+        ),
+        msg("user", "How does VPA interact with resource limits?"),
+        msg(
+            "assistant",
+            "VPA observes container resource usage over a rolling window (typically 8 \
+             days) and recommends target, lower-bound, and upper-bound values. In Auto \
+             mode it evicts pods to apply new requests/limits. The recommendation is \
+             capped by any LimitRange in the namespace and bounded by the container's \
+             max allowed resource policy.",
+        ),
+        msg("user", "What are the tradeoffs between HPA and VPA?"),
+        msg(
+            "assistant",
+            "HPA scales horizontally (more replicas) based on metrics, while VPA scales \
+             vertically (bigger containers). Running both on the same resource (CPU/memory) \
+             creates a feedback loop — HPA adds replicas, reducing per-pod utilization, \
+             causing VPA to shrink them. The standard pattern is HPA on CPU and VPA on \
+             memory, or using multidimensional pod autoscaler (MPA) to coordinate both.",
+        ),
+        msg("user", "Summarize the key takeaways."),
+    ]
+}
+
+/// Human-readable label for a chat size.
+pub fn chat_size_label(size: &str) -> &'static str {
+    match size {
+        "short" => "short (2 turns, ~50 tokens)",
+        "medium" => "medium (5 turns, ~500 tokens)",
+        "long" => "long (20 turns, ~3000 tokens)",
+        _ => "unknown",
+    }
+}
+
+/// Return a chat payload for a given size name.
+pub fn chat_for_size(size: &str) -> Option<Vec<ChatMessage>> {
+    match size {
+        "short" => Some(chat_short()),
+        "medium" => Some(chat_medium()),
+        "long" => Some(chat_long()),
+        _ => None,
+    }
+}
+
 /// Human-readable label for a text size.
 pub fn text_size_label(size: &str) -> &'static str {
     match size {

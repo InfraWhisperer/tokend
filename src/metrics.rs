@@ -9,6 +9,7 @@ use std::sync::Arc;
 /// `with_label_values` hash lookups on the hot path.
 struct ModelMetrics {
     latency: Histogram,
+    chat_render: Histogram,
     tokens: Counter,
     requests_ok: Counter,
     requests_err: Counter,
@@ -17,6 +18,7 @@ struct ModelMetrics {
 #[derive(Clone)]
 pub struct Metrics {
     tokenize_latency_us: HistogramVec,
+    chat_template_render_us: HistogramVec,
     tokens_total: CounterVec,
     requests_total: CounterVec,
     pub loaded_models: Gauge,
@@ -41,6 +43,14 @@ impl Metrics {
         )
         .expect("failed to register tokend_tokenize_latency_us");
 
+        let chat_template_render_us = register_histogram_vec!(
+            "tokend_chat_template_render_us",
+            "Chat template rendering latency in microseconds",
+            &["model"],
+            vec![1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0]
+        )
+        .expect("failed to register tokend_chat_template_render_us");
+
         let tokens_total =
             register_counter_vec!("tokend_tokens_total", "Total tokens produced", &["model"])
                 .expect("failed to register tokend_tokens_total");
@@ -60,6 +70,7 @@ impl Metrics {
 
         Self {
             tokenize_latency_us,
+            chat_template_render_us,
             tokens_total,
             requests_total,
             loaded_models,
@@ -74,6 +85,7 @@ impl Metrics {
             self.per_model.entry(model.to_string()).or_insert_with(|| {
                 ModelMetrics {
                     latency: self.tokenize_latency_us.with_label_values(&[model]),
+                    chat_render: self.chat_template_render_us.with_label_values(&[model]),
                     tokens: self.tokens_total.with_label_values(&[model]),
                     requests_ok: self.requests_total.with_label_values(&[model, "ok"]),
                     requests_err: self.requests_total.with_label_values(&[model, "error"]),
@@ -86,6 +98,21 @@ impl Metrics {
         self.ensure_model(model);
         let m = self.per_model.get(model).unwrap();
         m.latency.observe(latency_us);
+        m.tokens.inc_by(token_count as f64);
+        m.requests_ok.inc();
+    }
+
+    pub fn record_chat_tokenize(
+        &self,
+        model: &str,
+        latency_us: f64,
+        render_us: f64,
+        token_count: u64,
+    ) {
+        self.ensure_model(model);
+        let m = self.per_model.get(model).unwrap();
+        m.latency.observe(latency_us);
+        m.chat_render.observe(render_us);
         m.tokens.inc_by(token_count as f64);
         m.requests_ok.inc();
     }

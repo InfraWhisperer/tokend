@@ -14,7 +14,7 @@ mod proto {
 }
 
 use proto::tokenizer_service_client::TokenizerServiceClient;
-use proto::{HealthRequest, TokenizeRequest};
+use proto::{ChatMessage, ChatTokenizeRequest, HealthRequest, TokenizeRequest};
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -35,7 +35,7 @@ struct Cli {
     model: String,
 
     /// Concurrent client tasks
-    #[arg(short, long, default_value_t = 1)]
+    #[arg(short, long, default_value_t = 32)]
     concurrency: u32,
 
     /// Total requests to send (0 = use --duration instead)
@@ -61,6 +61,14 @@ struct Cli {
     /// Seconds to wait for server health before giving up
     #[arg(long, default_value_t = 60)]
     wait_ready: u64,
+
+    /// Use ChatTokenize RPC instead of Tokenize
+    #[arg(long, default_value_t = false)]
+    chat: bool,
+
+    /// Number of conversation turns in chat mode (system + N-1 user/assistant pairs)
+    #[arg(long, default_value_t = 5)]
+    turns: usize,
 
     /// Output format: text, json
     #[arg(long, default_value = "text")]
@@ -206,11 +214,19 @@ fn print_text_report(stats: &Stats, cli: &Cli) {
         "  Model:         {}",
         cli.model
     );
-    println!(
-        "  Text size:     {}",
-        payloads::text_size_label(&cli.text_size)
-    );
-    println!("  Batch size:    {}", cli.batch_size);
+    if cli.chat {
+        println!(
+            "  Chat size:     {}",
+            payloads::chat_size_label(&cli.text_size)
+        );
+        println!("  Turns:         {}", cli.turns);
+    } else {
+        println!(
+            "  Text size:     {}",
+            payloads::text_size_label(&cli.text_size)
+        );
+        println!("  Batch size:    {}", cli.batch_size);
+    }
     println!("  Concurrency:   {}", cli.concurrency);
     println!();
 
@@ -372,6 +388,39 @@ async fn run_warmup(
     }
 }
 
+/// Build a synthetic multi-turn conversation from the text payload.
+fn build_chat_messages(text: &str, turns: usize) -> Vec<ChatMessage> {
+    let mut messages = Vec::with_capacity(turns);
+    messages.push(ChatMessage {
+        role: "system".into(),
+        content: Some("You are a helpful assistant.".into()),
+        tool_calls: vec![],
+        tool_call_id: None,
+        name: None,
+    });
+
+    for i in 1..turns {
+        let role = if i % 2 == 1 { "user" } else { "assistant" };
+        // Vary content slightly per turn to avoid trivial caching
+        let content = if text.len() > 100 {
+            let offset = (i * 37) % (text.len() / 2);
+            let end = (offset + text.len() / 2).min(text.len());
+            &text[offset..end]
+        } else {
+            text
+        };
+        messages.push(ChatMessage {
+            role: role.into(),
+            content: Some(content.into()),
+            tool_calls: vec![],
+            tool_call_id: None,
+            name: None,
+        });
+    }
+
+    messages
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -379,13 +428,27 @@ async fn main() -> anyhow::Result<()> {
     let text = payloads::text_for_size(&cli.text_size)
         .with_context(|| format!("unknown text size '{}'; use short/medium/long", cli.text_size))?;
 
-    let texts: Vec<String> = std::iter::repeat_n(text.to_string(), cli.batch_size as usize).collect();
+    let texts: Vec<String> =
+        std::iter::repeat_n(text.to_string(), cli.batch_size as usize).collect();
 
-    let request = TokenizeRequest {
+    let tokenize_request = TokenizeRequest {
         model: cli.model.clone(),
         texts,
         add_special_tokens: true,
         return_tokens: false,
+    };
+
+    // Build chat request if --chat mode
+    let chat_request = if cli.chat {
+        let messages = build_chat_messages(text, cli.turns);
+        Some(ChatTokenizeRequest {
+            model: cli.model.clone(),
+            messages,
+            add_generation_prompt: true,
+            return_tokens: false,
+        })
+    } else {
+        None
     };
 
     // Lazy channel — defers TCP connect to the first RPC so the health-check
@@ -408,8 +471,10 @@ async fn main() -> anyhow::Result<()> {
     if cli.warmup > 0 {
         eprintln!("Warming up ({} requests)...", cli.warmup);
         let mut warmup_client = TokenizerServiceClient::new(channel.clone());
-        run_warmup(&mut warmup_client, cli.warmup, &request).await;
+        run_warmup(&mut warmup_client, cli.warmup, &tokenize_request).await;
     }
+
+    let use_chat = cli.chat;
 
     // Prepare shared state for workers
     let done = Arc::new(AtomicBool::new(false));
@@ -449,7 +514,8 @@ async fn main() -> anyhow::Result<()> {
     let mut handles = Vec::new();
     for _ in 0..cli.concurrency {
         let channel = channel.clone();
-        let req = request.clone();
+        let tok_req = tokenize_request.clone();
+        let chat_req = chat_request.clone();
         let done = done.clone();
         let budget = request_budget.clone();
         let tx = tx.clone();
@@ -461,28 +527,44 @@ async fn main() -> anyhow::Result<()> {
                     break;
                 }
 
-                // Try to claim a request from the budget
                 let prev = budget.fetch_sub(1, Ordering::AcqRel);
                 if prev == 0 {
-                    // Budget exhausted; restore and exit
                     budget.fetch_add(1, Ordering::Release);
                     done.store(true, Ordering::Release);
                     break;
                 }
 
                 let start = Instant::now();
-                let result = client.tokenize(req.clone()).await;
-                let latency = start.elapsed();
 
-                let (token_count, server_latency_us, is_error, status) = match result {
-                    Ok(resp) => {
-                        let inner = resp.into_inner();
-                        let tokens: u64 =
-                            inner.results.iter().map(|r| r.token_count as u64).sum();
-                        (tokens, inner.latency_us, false, "OK".to_string())
+                let (token_count, server_latency_us, is_error, status) = if use_chat {
+                    match client
+                        .chat_tokenize(chat_req.clone().unwrap())
+                        .await
+                    {
+                        Ok(resp) => {
+                            let inner = resp.into_inner();
+                            (
+                                inner.token_count as u64,
+                                inner.latency_us,
+                                false,
+                                "OK".to_string(),
+                            )
+                        }
+                        Err(e) => (0, 0, true, e.code().to_string()),
                     }
-                    Err(e) => (0, 0, true, e.code().to_string()),
+                } else {
+                    match client.tokenize(tok_req.clone()).await {
+                        Ok(resp) => {
+                            let inner = resp.into_inner();
+                            let tokens: u64 =
+                                inner.results.iter().map(|r| r.token_count as u64).sum();
+                            (tokens, inner.latency_us, false, "OK".to_string())
+                        }
+                        Err(e) => (0, 0, true, e.code().to_string()),
+                    }
                 };
+
+                let latency = start.elapsed();
 
                 let _ = tx.send(RequestResult {
                     latency,

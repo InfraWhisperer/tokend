@@ -8,6 +8,11 @@ service TokenizerService {
   // Returns INVALID_ARGUMENT if texts is empty.
   rpc Tokenize(TokenizeRequest) returns (TokenizeResponse);
 
+  // Apply a model's chat template to messages, then tokenize the result.
+  // Returns NOT_FOUND if model has not been loaded.
+  // Returns FAILED_PRECONDITION if model has no chat template.
+  rpc ChatTokenize(ChatTokenizeRequest) returns (ChatTokenizeResponse);
+
   // Load and register a tokenizer by name.
   // Returns ALREADY_EXISTS if model is already registered.
   rpc LoadTokenizer(LoadTokenizerRequest) returns (LoadTokenizerResponse);
@@ -41,6 +46,44 @@ message TokenizeResponse {
   repeated TokenResult results = 2;
   // Wall-clock microseconds spent inside the tokenizer.
   uint64 latency_us = 3;
+}
+
+// --- Chat Tokenize ---
+
+message ChatMessage {
+  string role = 1;
+  optional string content = 2;
+  repeated ToolCall tool_calls = 3;
+  optional string tool_call_id = 4;
+  optional string name = 5;
+}
+
+message ToolCall {
+  string id = 1;
+  string type = 2;
+  FunctionCall function = 3;
+}
+
+message FunctionCall {
+  string name = 1;
+  string arguments = 2;
+}
+
+message ChatTokenizeRequest {
+  string model = 1;
+  repeated ChatMessage messages = 2;
+  bool add_generation_prompt = 3;
+  bool return_tokens = 4;
+}
+
+message ChatTokenizeResponse {
+  string model = 1;
+  uint32 token_count = 2;
+  repeated uint32 token_ids = 3;
+  repeated string tokens = 4;
+  uint64 latency_us = 5;
+  // Microseconds spent rendering the chat template (subset of latency_us).
+  uint64 render_us = 6;
 }
 
 // --- Load/Unload ---
