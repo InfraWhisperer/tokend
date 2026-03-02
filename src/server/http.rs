@@ -210,15 +210,17 @@ async fn chat_tokenize_handler(
 
             (
                 StatusCode::OK,
-                Json(serde_json::to_value(ChatTokenizeResponse {
-                    model: req.model,
-                    token_count: result.token_count,
-                    token_ids: result.token_ids,
-                    tokens: result.tokens,
-                    latency_us,
-                    render_us: result.render_us,
-                })
-                .unwrap()),
+                Json(
+                    serde_json::to_value(ChatTokenizeResponse {
+                        model: req.model,
+                        token_count: result.token_count,
+                        token_ids: result.token_ids,
+                        tokens: result.tokens,
+                        latency_us,
+                        render_us: result.render_us,
+                    })
+                    .unwrap(),
+                ),
             )
                 .into_response()
         }

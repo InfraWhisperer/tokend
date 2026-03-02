@@ -149,7 +149,10 @@ pub fn extract_chat_template(config: &serde_json::Value) -> Option<String> {
             // Look for a "default" named template first
             for entry in arr {
                 if entry.get("name").and_then(|n| n.as_str()) == Some("default") {
-                    return entry.get("template").and_then(|t| t.as_str()).map(|s| s.to_string());
+                    return entry
+                        .get("template")
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.to_string());
                 }
             }
             // Fall back to first entry
@@ -168,9 +171,10 @@ pub fn extract_chat_template(config: &serde_json::Value) -> Option<String> {
 pub fn extract_special_token(config: &serde_json::Value, key: &str) -> Option<String> {
     match config.get(key)? {
         serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Object(obj) => {
-            obj.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())
-        }
+        serde_json::Value::Object(obj) => obj
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         _ => None,
     }
 }
@@ -249,9 +253,6 @@ mod tests {
         let config = serde_json::json!({
             "eos_token": { "content": "</s>", "__type": "AddedToken" }
         });
-        assert_eq!(
-            extract_special_token(&config, "eos_token").unwrap(),
-            "</s>"
-        );
+        assert_eq!(extract_special_token(&config, "eos_token").unwrap(), "</s>");
     }
 }

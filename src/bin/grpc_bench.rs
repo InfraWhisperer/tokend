@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
@@ -210,10 +210,7 @@ fn print_text_report(stats: &Stats, cli: &Cli) {
     );
     println!("  Tokens/sec:    {}", format_float(stats.tokens_per_sec()));
     println!();
-    println!(
-        "  Model:         {}",
-        cli.model
-    );
+    println!("  Model:         {}", cli.model);
     if cli.chat {
         println!(
             "  Chat size:     {}",
@@ -240,11 +237,7 @@ fn print_text_report(stats: &Stats, cli: &Cli) {
     if !stats.latencies.is_empty() {
         println!("Latency distribution:");
         for p in [10.0, 25.0, 50.0, 75.0, 90.0, 95.0, 99.0, 99.9, 99.99] {
-            println!(
-                "  {:>6.2}% in {}",
-                p,
-                format_duration(stats.percentile(p))
-            );
+            println!("  {:>6.2}% in {}", p, format_duration(stats.percentile(p)));
         }
         println!();
     }
@@ -425,8 +418,12 @@ fn build_chat_messages(text: &str, turns: usize) -> Vec<ChatMessage> {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let text = payloads::text_for_size(&cli.text_size)
-        .with_context(|| format!("unknown text size '{}'; use short/medium/long", cli.text_size))?;
+    let text = payloads::text_for_size(&cli.text_size).with_context(|| {
+        format!(
+            "unknown text size '{}'; use short/medium/long",
+            cli.text_size
+        )
+    })?;
 
     let texts: Vec<String> =
         std::iter::repeat_n(text.to_string(), cli.batch_size as usize).collect();
@@ -459,12 +456,11 @@ async fn main() -> anyhow::Result<()> {
         .connect_lazy();
 
     let mut health_client = TokenizerServiceClient::new(channel.clone());
-    eprintln!("Waiting for server health (timeout: {}s)...", cli.wait_ready);
-    wait_for_health(
-        &mut health_client,
-        Duration::from_secs(cli.wait_ready),
-    )
-    .await?;
+    eprintln!(
+        "Waiting for server health (timeout: {}s)...",
+        cli.wait_ready
+    );
+    wait_for_health(&mut health_client, Duration::from_secs(cli.wait_ready)).await?;
     eprintln!("Server is healthy.");
 
     // Warmup
@@ -537,10 +533,7 @@ async fn main() -> anyhow::Result<()> {
                 let start = Instant::now();
 
                 let (token_count, server_latency_us, is_error, status) = if use_chat {
-                    match client
-                        .chat_tokenize(chat_req.clone().unwrap())
-                        .await
-                    {
+                    match client.chat_tokenize(chat_req.clone().unwrap()).await {
                         Ok(resp) => {
                             let inner = resp.into_inner();
                             (

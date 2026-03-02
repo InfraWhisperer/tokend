@@ -104,7 +104,10 @@ pub fn chat_short() -> Vec<ChatMessage> {
 /// 5-turn conversation. ~500 tokens after template application.
 pub fn chat_medium() -> Vec<ChatMessage> {
     vec![
-        msg("system", "You are a helpful assistant specializing in distributed systems."),
+        msg(
+            "system",
+            "You are a helpful assistant specializing in distributed systems.",
+        ),
         msg("user", "Explain how Kubernetes scheduling works."),
         msg("assistant", TEXT_MEDIUM),
         msg("user", "How does the HPA interact with custom metrics?"),
@@ -122,16 +125,28 @@ pub fn chat_medium() -> Vec<ChatMessage> {
 /// 20-turn conversation. ~3000 tokens after template application.
 pub fn chat_long() -> Vec<ChatMessage> {
     vec![
-        msg("system", "You are an expert in LLM inference infrastructure."),
+        msg(
+            "system",
+            "You are an expert in LLM inference infrastructure.",
+        ),
         msg("user", "What is disaggregated LLM serving?"),
         msg("assistant", &TEXT_LONG[..600]),
         msg("user", "How does prefix-cache-aware routing work?"),
         msg("assistant", &TEXT_LONG[600..1200]),
-        msg("user", "What about KV-cache coordination in split-brain scenarios?"),
+        msg(
+            "user",
+            "What about KV-cache coordination in split-brain scenarios?",
+        ),
         msg("assistant", &TEXT_LONG[1200..1800]),
-        msg("user", "How does attention kernel selection depend on sequence length?"),
+        msg(
+            "user",
+            "How does attention kernel selection depend on sequence length?",
+        ),
         msg("assistant", &TEXT_LONG[1800..]),
-        msg("user", "Can you elaborate on the observability requirements?"),
+        msg(
+            "user",
+            "Can you elaborate on the observability requirements?",
+        ),
         msg("assistant", TEXT_MEDIUM),
         msg("user", "How does the scheduler assign pods to nodes?"),
         msg(

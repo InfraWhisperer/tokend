@@ -12,8 +12,8 @@ pub mod proto {
 
 use proto::tokenizer_service_server::{TokenizerService, TokenizerServiceServer};
 use proto::{
-    ChatTokenizeRequest, ChatTokenizeResponse, HealthRequest, HealthResponse,
-    LoadTokenizerRequest, LoadTokenizerResponse, TokenResult, TokenizeRequest, TokenizeResponse,
+    ChatTokenizeRequest, ChatTokenizeResponse, HealthRequest, HealthResponse, LoadTokenizerRequest,
+    LoadTokenizerResponse, TokenResult, TokenizeRequest, TokenizeResponse,
     TokenizerSource as ProtoSource, UnloadTokenizerRequest, UnloadTokenizerResponse,
 };
 

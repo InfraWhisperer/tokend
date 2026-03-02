@@ -258,13 +258,12 @@ impl TokenizerRegistry {
 
         let mut results = Vec::with_capacity(texts.len());
         for text in texts {
-            let encoding =
-                tokenizer
-                    .encode(*text, add_special_tokens)
-                    .map_err(|e| TokenizerError::EncodeFailed {
-                        model: model.to_string(),
-                        source: e,
-                    })?;
+            let encoding = tokenizer.encode(*text, add_special_tokens).map_err(|e| {
+                TokenizerError::EncodeFailed {
+                    model: model.to_string(),
+                    source: e,
+                }
+            })?;
             let token_ids = encoding.get_ids().to_vec();
             let token_count = token_ids.len() as u32;
             let tokens = if return_tokens {

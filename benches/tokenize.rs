@@ -98,12 +98,7 @@ fn bench_single(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("single", label), text, |b, &input| {
             b.iter(|| {
                 registry
-                    .tokenize(
-                        black_box(MODEL_NAME),
-                        black_box(&[input]),
-                        true,
-                        false,
-                    )
+                    .tokenize(black_box(MODEL_NAME), black_box(&[input]), true, false)
                     .expect("tokenize must not fail")
             });
         });
@@ -140,12 +135,7 @@ fn bench_batch(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("batch", label), texts, |b, &input| {
             b.iter(|| {
                 registry
-                    .tokenize(
-                        black_box(MODEL_NAME),
-                        black_box(input),
-                        true,
-                        false,
-                    )
+                    .tokenize(black_box(MODEL_NAME), black_box(input), true, false)
                     .expect("tokenize must not fail")
             });
         });
@@ -184,32 +174,28 @@ fn bench_concurrent(c: &mut Criterion) {
 
         for (label, text) in cases {
             group.throughput(Throughput::Elements(concurrency));
-            group.bench_with_input(
-                BenchmarkId::new("tokenize", label),
-                text,
-                |b, &input| {
-                    b.iter(|| {
-                        rt.block_on(async {
-                            let mut handles = Vec::with_capacity(concurrency as usize);
-                            for _ in 0..concurrency {
-                                let reg = registry.clone();
-                                handles.push(tokio::spawn(async move {
-                                    reg.tokenize(
-                                        black_box(MODEL_NAME),
-                                        black_box(&[input]),
-                                        true,
-                                        false,
-                                    )
-                                    .expect("tokenize must not fail");
-                                }));
-                            }
-                            for h in handles {
-                                h.await.unwrap();
-                            }
-                        });
+            group.bench_with_input(BenchmarkId::new("tokenize", label), text, |b, &input| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let mut handles = Vec::with_capacity(concurrency as usize);
+                        for _ in 0..concurrency {
+                            let reg = registry.clone();
+                            handles.push(tokio::spawn(async move {
+                                reg.tokenize(
+                                    black_box(MODEL_NAME),
+                                    black_box(&[input]),
+                                    true,
+                                    false,
+                                )
+                                .expect("tokenize must not fail");
+                            }));
+                        }
+                        for h in handles {
+                            h.await.unwrap();
+                        }
                     });
-                },
-            );
+                });
+            });
         }
 
         group.finish();
