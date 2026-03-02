@@ -3,3 +3,9 @@
 *.swo
 .DS_Store
 docs/plans/
+
+# Internal-only files (not for public repo)
+build.sh
+deploy/
+docs/benchmarks-*.md
+docs/benchmarks-*.txt
