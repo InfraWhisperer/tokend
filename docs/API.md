@@ -26,6 +26,23 @@ server:
   http_port: 8765                   # TCP port for HTTP; default: 8765
   grpc_port: 8766                   # TCP port for gRPC; default: 8766
 
+# Envoy external processor configuration. When enabled, tokend runs a gRPC
+# service that Envoy's ext_proc filter connects to for in-band tokenization.
+ext_proc:
+  enabled: false                    # default: false
+  port: 8767                        # ext_proc gRPC listen port; default: 8767
+  intercept_paths:                  # request paths to intercept and tokenize
+    - "/v1/chat/completions"        # default paths
+    - "/chat/completions"
+    - "/v1/completions"
+    - "/completions"
+  mode: "headers"                   # "headers", "body", or "both"; default: "headers"
+  token_count_header: "x-tokend-token-count"  # default
+  model_header: "x-tokend-model"              # default
+  body_field: "token_count"         # JSON field for token count in body mode; default
+  inject_tokens: false              # inject token_ids array into body; default: false
+  token_ids_field: "token_ids"      # JSON field for token IDs array; default
+
 # Tokenizer disk cache. Downloaded HuggingFace tokenizers are written here
 # and read on subsequent starts. Supports ~ expansion.
 # Default: ~/.cache/tokend (falls back to /tmp/tokend/cache if $HOME is unset)
@@ -48,6 +65,15 @@ hf_token: "${HF_TOKEN}"
 | `server.uds_path` | string | `/var/run/tokend.sock` | Unix domain socket path |
 | `server.http_port` | uint16 | `8765` | HTTP listen port (0.0.0.0) |
 | `server.grpc_port` | uint16 | `8766` | gRPC listen port (0.0.0.0) |
+| `ext_proc.enabled` | bool | `false` | Enable the Envoy ext_proc gRPC server |
+| `ext_proc.port` | uint16 | `8767` | ext_proc gRPC listen port |
+| `ext_proc.intercept_paths` | list | see above | Request paths to intercept for tokenization |
+| `ext_proc.mode` | string | `"headers"` | Mutation mode: `"headers"`, `"body"`, or `"both"` |
+| `ext_proc.token_count_header` | string | `x-tokend-token-count` | Header name for injected token count |
+| `ext_proc.model_header` | string | `x-tokend-model` | Header name for resolved model |
+| `ext_proc.body_field` | string | `token_count` | JSON field name for token count in body mutations |
+| `ext_proc.inject_tokens` | bool | `false` | Inject full `token_ids` array into body mutations |
+| `ext_proc.token_ids_field` | string | `token_ids` | JSON field name for the token IDs array |
 | `cache_dir` | path | `~/.cache/tokend` | Disk cache for downloaded tokenizers |
 | `hf_token` | string | — | HuggingFace token; `${ENV_VAR}` expansion supported |
 
@@ -155,6 +181,61 @@ curl -s -X POST http://localhost:8765/tokenize \
 |---|---|---|
 | Model not loaded | 404 | `{"error": "model not loaded: <name>"}` |
 | Tokenization failure | 500 | `{"error": "<message>"}` |
+
+---
+
+### POST /v1/chat/tokenize
+
+Apply a model's chat template to a conversation, then tokenize the rendered prompt.
+Automatically loads the chat template from the model's `tokenizer_config.json` on
+HuggingFace Hub.
+
+**Request fields**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `model` | string | required | Model name as registered in tokend |
+| `messages` | array | required | Chat messages (`role`, `content`) |
+| `add_generation_prompt` | bool | `true` | Append the assistant turn start marker |
+| `tools` | array | — | Tool definitions for function-calling templates |
+| `add_special_tokens` | bool | `true` | Prepend/append BOS/EOS tokens |
+| `return_tokens` | bool | `false` | Include decoded token strings in response |
+
+**Example**
+
+```bash
+curl -s -X POST http://localhost:8765/v1/chat/tokenize \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen3-8B",
+    "messages": [
+      {"role": "system", "content": "You are helpful."},
+      {"role": "user", "content": "Explain KV caching."}
+    ]
+  }' | jq .
+```
+
+```json
+{
+  "model": "Qwen/Qwen3-8B",
+  "token_count": 18,
+  "token_ids": [151644, 872, 198, 6023, 151645, 198, 151644, 77091, 198, ...],
+  "latency_us": 55,
+  "render_us": 8
+}
+```
+
+The `render_us` field reports time spent in Jinja2 template rendering, separate from
+tokenization. This helps diagnose whether latency comes from template complexity or
+tokenizer vocabulary size.
+
+**Error responses**
+
+| Condition | HTTP status | Body |
+|---|---|---|
+| Model not loaded | 404 | `{"error": "model not loaded: <name>"}` |
+| Chat template not available | 400 | `{"error": "chat template not available for <model>"}` |
+| Template render failure | 500 | `{"error": "<message>"}` |
 
 ---
 
@@ -293,6 +374,11 @@ tokend_tokenize_latency_us_bucket{model="meta-llama/Llama-3.1-70B-Instruct",le="
 tokend_tokenize_latency_us_bucket{model="meta-llama/Llama-3.1-70B-Instruct",le="25"} 4
 tokend_tokenize_latency_us_bucket{model="meta-llama/Llama-3.1-70B-Instruct",le="50"} 91
 ...
+# HELP tokend_chat_template_render_us Chat template rendering latency in microseconds
+# TYPE tokend_chat_template_render_us histogram
+tokend_chat_template_render_us_bucket{model="Qwen/Qwen3-8B",le="1"} 0
+tokend_chat_template_render_us_bucket{model="Qwen/Qwen3-8B",le="5"} 42
+...
 # HELP tokend_tokens_total Total tokens produced
 # TYPE tokend_tokens_total counter
 tokend_tokens_total{model="meta-llama/Llama-3.1-70B-Instruct"} 142857
@@ -310,9 +396,50 @@ tokend_loaded_models 3
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `tokend_tokenize_latency_us` | histogram | `model` | Tokenizer wall-clock time in microseconds; buckets at 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000 |
+| `tokend_chat_template_render_us` | histogram | `model` | Chat template rendering time in microseconds; buckets at 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000 |
 | `tokend_tokens_total` | counter | `model` | Cumulative tokens produced across all requests |
 | `tokend_requests_total` | counter | `model`, `status` (`ok`\|`error`) | Cumulative tokenize requests by outcome |
 | `tokend_loaded_models` | gauge | — | Currently loaded tokenizer count |
+
+ext_proc requests are recorded against the same `tokend_tokenize_latency_us`,
+`tokend_tokens_total`, and `tokend_requests_total` metrics as direct API calls.
+The ext_proc path is not a separate metric namespace — it uses the same tokenizer
+registry and produces the same observable outputs.
+
+---
+
+## Envoy ext_proc
+
+tokend implements the Envoy
+[External Processing](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/ext_proc/v3/ext_proc.proto)
+gRPC service. When enabled, Envoy streams request headers and body to tokend, which
+parses the JSON payload, tokenizes it, and returns mutations — injecting token counts
+and IDs back into the request before it reaches the upstream backend.
+
+### Protocol flow
+
+1. Envoy sends `RequestHeaders` — tokend checks `:path` against `intercept_paths`
+2. If the path matches, tokend responds CONTINUE; Envoy buffers and sends the full body
+3. tokend parses the JSON body, dispatching on payload shape:
+   - `messages` field present → chat completions: apply chat template, then tokenize
+   - `prompt` field present → completions: raw tokenize (no template)
+4. tokend returns mutations based on the configured `mode`
+5. If tokenization fails, the request passes through with an `x-tokend-error` header (fail-open)
+
+### Mutation modes
+
+| Mode | Behavior |
+|---|---|
+| `headers` | Inject `x-tokend-token-count` and `x-tokend-model` request headers |
+| `body` | Mutate the JSON body to add `token_count` (and `token_ids` if `inject_tokens: true`) |
+| `both` | Headers + body mutation |
+
+### Envoy configuration
+
+The ext_proc filter must be configured with `request_body_mode: BUFFERED` so tokend
+receives the full request body for JSON parsing. See [examples/envoy.yaml](examples/envoy.yaml)
+for a working configuration and [examples/README.md](examples/README.md) for a Docker
+Compose demo.
 
 ---
 
@@ -443,7 +570,7 @@ grpcurl -plaintext \
 ### tokend serve
 
 Start the server. Reads config, loads tokenizers, then listens on HTTP TCP, HTTP UDS,
-and gRPC concurrently. Shuts down on SIGTERM or SIGINT.
+gRPC, and optionally ext_proc concurrently. Shuts down on SIGTERM or SIGINT.
 
 ```
 tokend [OPTIONS] serve
@@ -505,3 +632,13 @@ downloads count against startup time, not against the measured iterations.
 |---|---|
 | `HF_TOKEN` | HuggingFace API token; referenced in config as `hf_token: "${HF_TOKEN}"` |
 | `RUST_LOG` | Log level filter (e.g., `info`, `debug`, `tokend=trace`); parsed by `tracing-subscriber` |
+
+---
+
+## Ports
+
+| Port | Protocol | Description |
+|---|---|---|
+| 8765 | HTTP | REST API, health/readiness probes, Prometheus metrics |
+| 8766 | gRPC | TokenizerService RPCs |
+| 8767 | gRPC | Envoy ext_proc (when `ext_proc.enabled: true`) |

@@ -1,0 +1,25 @@
+services:
+  tokend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+    volumes:
+      - ./tokend-demo.yaml:/etc/tokend/tokend.yaml
+    ports:
+      - "8765:8765"
+      - "8766:8766"
+
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml
+    ports:
+      - "10000:10000"
+      - "9901:9901"
+    depends_on:
+      - tokend
+
+  httpbin:
+    image: kennethreitz/httpbin

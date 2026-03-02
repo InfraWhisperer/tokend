@@ -15,11 +15,13 @@ engine.
 ## Features
 
 - **Multi-model** — load any number of HuggingFace or local tokenizers concurrently
-- **Three transports** — HTTP over TCP, HTTP over UDS (sidecar-optimized), gRPC
+- **Chat template support** — apply model-specific chat templates (Jinja2/minijinja) before tokenization
+- **Envoy ext_proc** — transparent tokenization as an Envoy external processor; inject token counts and IDs into requests in-band
+- **Four transports** — HTTP over TCP, HTTP over UDS (sidecar-optimized), gRPC, Envoy ext_proc
 - **Hot-load / unload** — add or remove tokenizers at runtime without restart
 - **Sub-millisecond latency** — lock-minimized `DashMap` registry, `Arc<Tokenizer>` zero-copy on hot path
 - **Batch support** — tokenize multiple texts in a single request
-- **HuggingFace Hub** — download tokenizers on first use, cache to disk, run offline thereafter
+- **HuggingFace Hub** — download tokenizers and chat templates on first use, cache to disk, run offline thereafter
 - **Prometheus metrics** — latency histograms, token counters, request counters, loaded-model gauge
 - **Health / readiness probes** — Kubernetes-native liveness and readiness endpoints
 - **Sidecar-ready** — designed to run alongside Envoy or any inference gateway
@@ -55,15 +57,41 @@ docker run --rm \
 ### Tokenize
 
 ```bash
+# Raw tokenization
 curl -s -X POST http://localhost:8765/tokenize \
   -H 'Content-Type: application/json' \
   -d '{"model": "meta-llama/Llama-3.1-70B-Instruct", "text": "Hello world"}' | jq .
+
+# Chat template + tokenize
+curl -s -X POST http://localhost:8765/v1/chat/tokenize \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen3-8B",
+    "messages": [
+      {"role": "user", "content": "Explain KV caching."}
+    ]
+  }' | jq .
+```
+
+### Envoy ext_proc
+
+tokend can run as an Envoy external processor, intercepting `/v1/chat/completions` and
+`/v1/completions` requests to inject token counts and IDs transparently. See
+[examples/](examples/) for a Docker Compose demo with Envoy.
+
+```yaml
+ext_proc:
+  enabled: true
+  port: 8767
+  mode: "both"          # "headers", "body", or "both"
+  inject_tokens: true   # inject token_ids array into body
 ```
 
 ## Documentation
 
-- [API Reference](docs/API.md) — HTTP endpoints, gRPC RPCs, configuration, CLI, metrics
-- [Design](docs/DESIGN.md) — architecture, registry internals, performance, deployment patterns
+- [API Reference](docs/API.md) — HTTP endpoints, gRPC RPCs, ext_proc, configuration, CLI, metrics
+- [Design](docs/DESIGN.md) — architecture, registry internals, ext_proc protocol, deployment patterns
+- [Envoy ext_proc Demo](examples/README.md) — Docker Compose setup with Envoy
 
 ## Contributing
 

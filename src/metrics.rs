@@ -4,6 +4,7 @@ use prometheus::{
     register_counter_vec, register_gauge, register_histogram_vec,
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Pre-resolved metric handles for a single model, avoiding repeated
 /// `with_label_values` hash lookups on the hot path.
@@ -23,6 +24,9 @@ pub struct Metrics {
     requests_total: CounterVec,
     pub loaded_models: Gauge,
     per_model: Arc<DashMap<String, ModelMetrics>>,
+    ext_proc_requests: Arc<AtomicU64>,
+    ext_proc_passthrough: Arc<AtomicU64>,
+    ext_proc_errors: Arc<AtomicU64>,
 }
 
 impl Default for Metrics {
@@ -75,6 +79,9 @@ impl Metrics {
             requests_total,
             loaded_models,
             per_model: Arc::new(DashMap::new()),
+            ext_proc_requests: Arc::new(AtomicU64::new(0)),
+            ext_proc_passthrough: Arc::new(AtomicU64::new(0)),
+            ext_proc_errors: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -82,15 +89,15 @@ impl Metrics {
     /// subsequent calls are a DashMap get (no hash allocation).
     fn ensure_model(&self, model: &str) {
         if !self.per_model.contains_key(model) {
-            self.per_model.entry(model.to_string()).or_insert_with(|| {
-                ModelMetrics {
+            self.per_model
+                .entry(model.to_string())
+                .or_insert_with(|| ModelMetrics {
                     latency: self.tokenize_latency_us.with_label_values(&[model]),
                     chat_render: self.chat_template_render_us.with_label_values(&[model]),
                     tokens: self.tokens_total.with_label_values(&[model]),
                     requests_ok: self.requests_total.with_label_values(&[model, "ok"]),
                     requests_err: self.requests_total.with_label_values(&[model, "error"]),
-                }
-            });
+                });
         }
     }
 
@@ -124,6 +131,23 @@ impl Metrics {
 
     pub fn set_loaded_models(&self, count: f64) {
         self.loaded_models.set(count);
+    }
+
+    pub fn record_ext_proc(&self, model: &str, latency_us: f64, token_count: u64) {
+        self.ensure_model(model);
+        let m = self.per_model.get(model).unwrap();
+        m.latency.observe(latency_us);
+        m.tokens.inc_by(token_count as f64);
+        m.requests_ok.inc();
+        self.ext_proc_requests.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_ext_proc_passthrough(&self) {
+        self.ext_proc_passthrough.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_ext_proc_error(&self) {
+        self.ext_proc_errors.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn encode(&self) -> String {

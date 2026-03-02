@@ -9,6 +9,7 @@
 # Ports:
 #   8765 — HTTP / REST
 #   8766 — gRPC
+#   8767 — Envoy ext_proc (when enabled in config)
 #
 # UDS socket path: /var/run/tokend.sock (matches default config)
 #
@@ -131,11 +132,14 @@ USER tokend
 EXPOSE 8765
 # gRPC
 EXPOSE 8766
+# Envoy ext_proc
+EXPOSE 8767
 
 # HF_TOKEN at runtime enables on-demand private model downloads.
 # Unset by default — callers inject via `docker run -e HF_TOKEN=...`
 # or Kubernetes secretKeyRef.
 ENV HF_TOKEN=""
+ENV HOME="/var/cache/tokend"
 ENV HF_HOME="/var/cache/tokend"
 ENV RUST_LOG="tokend=info,warn"
 

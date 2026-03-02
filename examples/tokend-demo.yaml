@@ -1,9 +1,5 @@
 tokenizers:
-  - model: "meta-llama/Llama-3.1-70B-Instruct"
-    source: "huggingface"
-  - model: "Qwen/Qwen3-32B"
-    source: "huggingface"
-  - model: "mistralai/Mistral-7B-Instruct-v0.3"
+  - model: "Qwen/Qwen3-8B"
     source: "huggingface"
 
 server:
@@ -11,16 +7,17 @@ server:
   grpc_port: 8766
 
 ext_proc:
-  enabled: false
+  enabled: true
   port: 8767
   intercept_paths:
     - "/v1/chat/completions"
     - "/chat/completions"
     - "/v1/completions"
     - "/completions"
-  mode: "headers"
+  mode: "both"
   token_count_header: "x-tokend-token-count"
   model_header: "x-tokend-model"
+  inject_tokens: true
 
-cache_dir: "~/.cache/tokend"
+cache_dir: "/var/cache/tokend"
 hf_token: "${HF_TOKEN}"

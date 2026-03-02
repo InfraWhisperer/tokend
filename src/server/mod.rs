@@ -1,3 +1,4 @@
+pub mod ext_proc;
 pub mod grpc;
 pub mod http;
 
@@ -16,7 +17,7 @@ pub struct AppState {
     pub config: Arc<Config>,
 }
 
-/// Run all servers (HTTP, UDS, gRPC) concurrently.
+/// Run all servers (HTTP, UDS, gRPC, ext_proc) concurrently.
 pub async fn run(config: Config) -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -78,6 +79,18 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         }
     });
 
+    let ext_proc_handle = if state.config.ext_proc.enabled {
+        let ext_proc_state = state.clone();
+        let ext_proc_port = state.config.ext_proc.port;
+        Some(tokio::spawn(async move {
+            if let Err(e) = ext_proc::serve_ext_proc(ext_proc_state, ext_proc_port).await {
+                tracing::error!(error = %e, "ext_proc server failed");
+            }
+        }))
+    } else {
+        None
+    };
+
     info!(http_port, grpc_port, "tokend serving");
 
     // Wait for shutdown signal
@@ -89,6 +102,9 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         h.abort();
     }
     grpc_handle.abort();
+    if let Some(h) = ext_proc_handle {
+        h.abort();
+    }
 
     info!("tokend stopped");
     Ok(())

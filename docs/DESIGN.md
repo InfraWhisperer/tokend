@@ -15,11 +15,11 @@ tokenizer (coupling the gateway binary to every model variant in the fleet), or 
 tokenization and route blind.
 
 tokend breaks this coupling. It runs as a standalone process — sidecar to Envoy or
-any custom proxy — and exposes tokenization over HTTP (TCP and Unix domain socket) and
-gRPC. The gateway sends text, receives token IDs and counts, and dispatches to whatever
-backend it chooses. The inference backend is irrelevant. Multiple tokenizers load
-concurrently in a single daemon; the registry is lock-minimized via `DashMap` with shard
-locks dropped before encoding work begins.
+any custom proxy — and exposes tokenization over HTTP (TCP and Unix domain socket),
+gRPC, and Envoy ext_proc. The gateway sends text, receives token IDs and counts, and
+dispatches to whatever backend it chooses. The inference backend is irrelevant. Multiple
+tokenizers load concurrently in a single daemon; the registry is lock-minimized via
+`DashMap` with shard locks dropped before encoding work begins.
 
 ### What tokend is not
 
@@ -38,16 +38,19 @@ microseconds — no GPU involvement, no inference engine dependency.
 
 ### Transport layers
 
-tokend binds three listeners concurrently:
+tokend binds four listeners concurrently:
 
 | Transport | Default | Use case |
 |---|---|---|
 | HTTP over UDS | `/var/run/tokend.sock` | Same-host sidecar — lowest latency, no TCP stack |
 | HTTP over TCP | `:8765` | Cross-node callers, health checks, Prometheus scrape |
 | gRPC over TCP | `:8766` | Structured RPC for gateways that prefer protobuf |
+| Envoy ext_proc | `:8767` | In-band tokenization for Envoy's external processing filter |
 
-All three serve the same tokenizer registry. The UDS and TCP HTTP listeners share the
-same axum router. The gRPC listener runs a separate tonic service with equivalent RPCs.
+All transports share the same tokenizer registry and metrics. The UDS and TCP HTTP
+listeners share the same axum router. The gRPC listener runs a separate tonic service
+with equivalent RPCs. The ext_proc listener implements the Envoy `ExternalProcessor`
+gRPC service for transparent request interception.
 
 ### Tokenizer registry
 
@@ -62,6 +65,30 @@ Key design decisions:
 - **Load/unload at runtime**: `POST /tokenizers/load` and `DELETE /tokenizers/{model}`
   mutate the registry without restart. The loaded-models gauge updates atomically.
 
+### Chat template support
+
+HuggingFace models include a Jinja2 chat template in `tokenizer_config.json` that defines
+how multi-turn conversations are rendered into a flat prompt string. Different model
+families use different template syntax — ChatML (`<|im_start|>`), Llama (`[INST]`),
+Mistral, and many variants.
+
+tokend loads these templates at startup using the `minijinja` crate (a Rust-native Jinja2
+implementation). The template is compiled once and cached alongside the tokenizer in a
+parallel `DashMap<String, Arc<ChatTemplate>>`. On each `chat_tokenize` call:
+
+1. Render messages through the compiled template (microsecond-scale)
+2. Tokenize the rendered string
+3. Return token IDs, count, and render latency separately
+
+This two-step pipeline is exposed both via the `/v1/chat/tokenize` HTTP endpoint and
+implicitly through ext_proc when intercepting `/v1/chat/completions` requests.
+
+The template engine supports:
+- `bos_token` / `eos_token` injection from `tokenizer_config.json`
+- `add_generation_prompt` to append the assistant turn start marker
+- `tools` parameter for function-calling templates
+- Jinja2 control flow: `{% for %}`, `{% if %}`, filters, macros
+
 ### HuggingFace Hub integration
 
 For `source: huggingface` tokenizers, the load path is:
@@ -70,9 +97,72 @@ For `source: huggingface` tokenizers, the load path is:
 2. If cached, load from disk — no network.
 3. If not cached, call `Tokenizer::from_pretrained` with optional `HF_TOKEN`.
 4. Save the result to disk cache for subsequent starts.
+5. Fetch `tokenizer_config.json` for the chat template (best-effort).
 
 This means the first start downloads from HF Hub; subsequent starts are fully offline.
 Gated models (Llama, Gemma) require `HF_TOKEN` set in the environment or config.
+
+---
+
+## Envoy ext_proc
+
+The ext_proc integration makes tokend a transparent tokenization sidecar. Envoy's
+external processing filter streams every matching request through tokend before
+forwarding it to the upstream backend. The application (and the backend) don't need
+to know tokend exists.
+
+### Protocol
+
+The `ExternalProcessor::Process` RPC is a bidirectional stream — one stream per HTTP
+request flowing through Envoy.
+
+```
+Envoy                           tokend ext_proc
+  │                                  │
+  │── RequestHeaders ───────────────>│  Check :path against intercept_paths
+  │<── CONTINUE ────────────────────│
+  │                                  │
+  │── RequestBody (buffered) ───────>│  Parse JSON, extract model + messages/prompt
+  │                                  │  Tokenize (chat template if messages, raw if prompt)
+  │<── BodyResponse + mutations ────│  Inject headers/body per configured mode
+  │                                  │
+  │── ResponseHeaders ──────────────>│  CONTINUE (passthrough)
+  │<── CONTINUE ────────────────────│
+```
+
+### Payload dispatch
+
+The ext_proc handler dispatches on the JSON body shape, not the URL path:
+
+| Body field | Endpoint | Action |
+|---|---|---|
+| `messages` present | `/v1/chat/completions` | Apply chat template, then tokenize |
+| `prompt` present | `/v1/completions` | Raw tokenize (no template) |
+| Neither | — | Fail-open with `x-tokend-error` header |
+
+### Mutation modes
+
+- **Headers**: `x-tokend-token-count` and `x-tokend-model` injected as request headers.
+  Envoy can use these for routing, rate limiting, or load balancing decisions.
+- **Body**: the JSON body is mutated to add `token_count` (and optionally `token_ids`
+  when `inject_tokens: true`). Content-Length is updated to match the new body size.
+- **Both**: headers + body mutation simultaneously.
+
+### Design decisions
+
+- **Fail-open**: if tokenization fails (bad JSON, model not loaded, template error), the
+  request passes through with an `x-tokend-error` header. Production traffic is never
+  blocked by a sidecar token counter.
+- **Stateless per-stream**: each bidirectional stream is independent. No cross-request
+  state. The `AppState` (registry, metrics, config) is shared via Arc.
+- **Path filtering**: only paths in `intercept_paths` trigger body inspection. All other
+  requests get a fast CONTINUE with no body buffering.
+- **Phase-correct responses**: each `ProcessingResponse` variant matches the request phase.
+  `RequestHeaders` → `ExtResponse::RequestHeaders`, `ResponseHeaders` →
+  `ExtResponse::ResponseHeaders`, etc. Mismatches cause Envoy "spurious response" errors.
+- **Content-Length consistency**: when mutating the request body, the Content-Length header
+  is updated in the same response. Envoy enforces content-length/body-size consistency
+  and returns 500 on mismatch.
 
 ---
 
@@ -88,6 +178,8 @@ tokend targets sub-millisecond tokenization per call on CPU. The implementation:
   runs BPE and WordPiece in native code with SIMD where available.
 - **Batch support**: a single HTTP or gRPC call can tokenize multiple texts; the response
   is built with a single allocation per batch.
+- **Compiled chat templates**: minijinja compiles each template once at load time. Render
+  calls during tokenization are microsecond-scale (typically 2-10us).
 
 The `tokend bench` command measures throughput against all loaded models:
 
@@ -117,13 +209,13 @@ so p50/p99 are readable at production traffic levels.
 
 ## Comparison
 
-| System | Standalone tokenization service | Multiple concurrent models | Hot-load/unload | gRPC API | UDS transport |
-|---|---|---|---|---|---|
-| **tokend** | yes | yes | yes | yes | yes |
-| vLLM | no — embedded, OpenAI API only | no | no | no | no |
-| Dynamo | no — embedded in router | partial | no | partial | no |
-| TGI | no — embedded, REST only | no | no | no | no |
-| TensorRT-LLM | no — embedded in triton backend | no | no | via triton | no |
+| System | Standalone tokenization service | Multiple concurrent models | Hot-load/unload | gRPC API | UDS transport | Envoy ext_proc | Chat templates |
+|---|---|---|---|---|---|---|---|
+| **tokend** | yes | yes | yes | yes | yes | yes | yes |
+| vLLM | no — embedded, OpenAI API only | no | no | no | no | no | yes |
+| Dynamo | no — embedded in router | partial | no | partial | no | no | yes |
+| TGI | no — embedded, REST only | no | no | no | no | no | yes |
+| TensorRT-LLM | no — embedded in triton backend | no | no | via triton | no | no | partial |
 
 The pattern missing from all existing systems: a process whose only job is tokenization,
 reachable by any gateway regardless of which inference backend serves the request.
@@ -159,6 +251,7 @@ containers:
     ports:
       - containerPort: 8765  # HTTP (for health checks)
       - containerPort: 8766  # gRPC (for cross-node callers)
+      - containerPort: 8767  # ext_proc (for Envoy)
     readinessProbe:
       httpGet:
         path: /ready
@@ -169,7 +262,7 @@ containers:
       - name: tokend-socket
         mountPath: /var/run
       - name: tokend-cache
-        mountPath: /root/.cache/tokend
+        mountPath: /var/cache/tokend
       - name: tokend-config
         mountPath: /etc/tokend
 
@@ -184,5 +277,14 @@ volumes:
       name: tokend-config
 ```
 
-The gateway connects to tokend via `/var/run/tokend.sock`. The UDS path crosses the
-shared `emptyDir` volume — no port allocation, no loopback traffic.
+The gateway connects to tokend via `/var/run/tokend.sock` for direct tokenization calls,
+or via `localhost:8767` for Envoy ext_proc. The UDS path crosses the shared `emptyDir`
+volume — no port allocation, no loopback traffic.
+
+### Envoy ext_proc sidecar
+
+When running as an Envoy ext_proc sidecar, Envoy's filter chain handles the integration
+transparently. No application code changes required — Envoy intercepts matching requests,
+streams them to tokend for tokenization, and forwards the mutated request to the backend.
+
+See [examples/](../examples/) for a working Docker Compose demo with Envoy + tokend + httpbin.

@@ -5,6 +5,8 @@ use std::path::PathBuf;
 pub struct Config {
     pub tokenizers: Vec<TokenizerConfig>,
     pub server: ServerConfig,
+    #[serde(default)]
+    pub ext_proc: ExtProcConfig,
     #[serde(default = "default_cache_dir")]
     pub cache_dir: PathBuf,
     #[serde(default)]
@@ -46,6 +48,79 @@ pub struct ServerConfig {
     pub http_port: u16,
     #[serde(default = "default_grpc_port")]
     pub grpc_port: u16,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExtProcConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_ext_proc_port")]
+    pub port: u16,
+    #[serde(default = "default_intercept_paths")]
+    pub intercept_paths: Vec<String>,
+    /// "headers", "body", or "both"
+    #[serde(default = "default_ext_proc_mode")]
+    pub mode: String,
+    #[serde(default = "default_token_count_header")]
+    pub token_count_header: String,
+    #[serde(default = "default_model_header")]
+    pub model_header: String,
+    #[serde(default = "default_body_field")]
+    pub body_field: String,
+    /// When true, inject the token_ids array into the mutated request body.
+    #[serde(default)]
+    pub inject_tokens: bool,
+    #[serde(default = "default_token_ids_field")]
+    pub token_ids_field: String,
+}
+
+impl Default for ExtProcConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_ext_proc_port(),
+            intercept_paths: default_intercept_paths(),
+            mode: default_ext_proc_mode(),
+            token_count_header: default_token_count_header(),
+            model_header: default_model_header(),
+            body_field: default_body_field(),
+            inject_tokens: false,
+            token_ids_field: default_token_ids_field(),
+        }
+    }
+}
+
+fn default_ext_proc_port() -> u16 {
+    8767
+}
+
+fn default_intercept_paths() -> Vec<String> {
+    vec![
+        "/v1/chat/completions".to_string(),
+        "/chat/completions".to_string(),
+        "/v1/completions".to_string(),
+        "/completions".to_string(),
+    ]
+}
+
+fn default_ext_proc_mode() -> String {
+    "headers".to_string()
+}
+
+fn default_token_count_header() -> String {
+    "x-tokend-token-count".to_string()
+}
+
+fn default_model_header() -> String {
+    "x-tokend-model".to_string()
+}
+
+fn default_body_field() -> String {
+    "token_count".to_string()
+}
+
+fn default_token_ids_field() -> String {
+    "token_ids".to_string()
 }
 
 fn default_http_port() -> u16 {
